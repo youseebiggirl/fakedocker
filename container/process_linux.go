@@ -38,12 +38,6 @@ func RunProcess(tty bool, cmd string) {
 	// 否则进程会无限调用自己
 	c.Run()
 
-	// 调用 Run() 程序不能正常运行，不知道为什么
-
-	// if err := c.Start(); err != nil {
-	// 	log.Println(err)
-	// }
-	// c.Wait()
 	// 执行完成后，退出进程
 	os.Exit(-1)
 }
@@ -65,6 +59,9 @@ func InitProcess(cmd string) error {
 	if err := syscall.Mount("proc", "/proc", "proc", uintptr(defaultMountFlags), ""); err != nil {
 		return err
 	}
+
+	// 试试如果没有下面这些内容会怎么样
+	// 执行完成后，没有进入到容器进程，echo $$ 输出依然为之前的 pid 而不是 1
 	argv := []string{cmd}
 	if err := syscall.Exec(cmd, argv, os.Environ()); err != nil {
 		return err
