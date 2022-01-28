@@ -56,12 +56,24 @@ func FindCgroupMountPoint(subsystem string) string {
 
 func GetCgroupPath(subsystem string, cgroupPath string, autoCreate bool) (string, error) {
 	cgroupRoot := FindCgroupMountPoint(subsystem)
-	_, err := os.Stat(path.Join(cgroupRoot, cgroupPath))
-	if err == nil || (autoCreate && os.IsNotExist(err)) {
-		if err := os.Mkdir(path.Join(cgroupRoot, cgroupPath), 0755); err != nil {
-			return "", fmt.Errorf("create cgroup error: %v", err)
+	p := path.Join(cgroupRoot, cgroupPath)
+	_, err := os.Stat(p)
+	if err != nil {
+		// 如果文件夹不存在且用户指定自动创建
+		if autoCreate && os.IsNotExist(err) {
+			if err := os.Mkdir(p, 0755); err != nil {
+				return "", fmt.Errorf("create cgroup error: %v", err)
+			}
+		} else {
+			return p, fmt.Errorf("cgroup path error: %v", err)
 		}
-		return path.Join(cgroupRoot, cgroupPath), nil
 	}
-	return "", fmt.Errorf("cgroup path error: %v", err)
+	return p, nil
+	// if err == nil || (autoCreate && os.IsNotExist(err)) {
+	// 	if err := os.Mkdir(path.Join(cgroupRoot, cgroupPath), 0755); err != nil {
+	// 		return "", fmt.Errorf("create cgroup error: %v", err)
+	// 	}
+	// 	return path.Join(cgroupRoot, cgroupPath), nil
+	// }
+	// return "", fmt.Errorf("cgroup path error: %v", err)
 }

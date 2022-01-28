@@ -1,70 +1,109 @@
 package container
 
 import (
-	"log"
 	"os"
 	"os/exec"
 	"syscall"
+
+	"github.com/YOUSEEBIGGIRL/fakedocke/cgroup"
+	"github.com/YOUSEEBIGGIRL/fakedocke/cgroup/subsystems"
+	"github.com/YOUSEEBIGGIRL/fakedocke/zlog"
+	"go.uber.org/zap"
 )
 
-// NewParentProcess 创建一个隔离的容器进程
-func NewParentProcess(tty bool, command string) *exec.Cmd {
-	// 调用 init 命令进行初始化（挂载 /proc）
-	// 同时调用用户传入的 command
-	args := []string{"init", command}
-	//log.Println("args: ", args)
-	// 自己调用自己，同时指定了上面的 args，达到初始化的效果
-	cmd := exec.Command("/proc/self/exe", args...)
-	log.Printf("command: %v\n", cmd.String())
+// NewPipe 创建一个匿名管道用于父子进程间通信
+func NewPipe() (rPipe, wPipe *os.File, err error) {
+	rPipe, wPipe, err = os.Pipe()
+	if err != nil {
+		//zlog.New().Error("create pipe error: ", zap.Error(err))
+		return nil, nil, err
+	}
+	return
+}
+
+// NewParentProcess 创建一个隔离的容器进程，但并不运行，同时创建一个管道用于
+// 进程通信，返回管道的写端，子进程拥有管道的读端，父进程通过写端向管道写入用户
+// 传入的参数，子进程通过读端来获取参数
+// tty 表示是否开启一个伪终端
+//（疑问：是不是叫 NewChildProcess 更合适？）
+func NewParentProcess(tty bool) (cmd *exec.Cmd, wp *os.File) {
+	// 自己调用自己，同时调用 init 命令（init 会调用 InitProcess）进行初始化（挂载 /proc）
+	// cmd 可以理解为一个子进程，但是还没有启动，后续调用 Run 或 Start 启动
+	cmd = exec.Command("/proc/self/exe", "init")
+	zlog.New().Info("exec this command: ", zap.String("cmd: ", cmd.String()))
+	//log.Printf("command: %v\n", cmd.String())
+
+	rp, wp, err := NewPipe()
+	if err != nil {
+		zlog.New().Error("create pipe error: ", zap.Error(err))
+		return nil, nil
+	}
+
+	// ExtraFiles 用于给新进程继承父进程中打开的文件
+	// 这里将管道的读端 readPipe 传递给子进程，这样子进程就可以发送数据到管道中了
+	// 一个进程默认有 3 个文件描述符，stdin，stdout 和 stderr
+	cmd.ExtraFiles = []*os.File{rp}
+
 	// fork 一个新进程，并且使用 namespace 对资源进行了隔离
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS |
-			syscall.CLONE_NEWNET | syscall.CLONE_NEWIPC,
+		Cloneflags: syscall.CLONE_NEWUTS |
+			syscall.CLONE_NEWPID |
+			syscall.CLONE_NEWNS |
+			syscall.CLONE_NEWNET |
+			syscall.CLONE_NEWIPC,
 	}
+
+	// 是否开启伪终端
 	if tty {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
-	return cmd
+	return cmd, wp
 }
 
 // RunProcess 运行容器进程
-func RunProcess(tty bool, cmd string) {
-	log.Printf("run process, command: %v, tty: %v\n", cmd, tty)
-	c := NewParentProcess(tty, cmd)
+func RunProcess(tty bool, cmds []string, resConf *subsystems.ResourceConfig) {
+	zlog.New().Info(
+		"run process",
+		zap.Strings("all command", cmds),
+		zap.Bool("tty open status: ", tty),
+	)
+
+	zlog.New().Info(
+		"resource config",
+		zap.String("memory limit", resConf.MemoryLimit),
+		zap.String("cpushare limit", resConf.CPUShare),
+		zap.String("cpuset limit", resConf.CPUSet),
+	)
+
+	p, wp := NewParentProcess(tty)
 	// 运行并等待 cmd 执行完成
-	// 不要使用 Start()，该函数不会等待执行完成（除非之后再调用 Wait()，其实 Run 内部就是这么做的）
-	// 否则进程会无限调用自己
-	c.Run()
+	p.Start()
+
+	sendInitCommand(cmds, wp)
+
+	cg := cgroup.NewCgroupManager("cgroup-test", resConf)
+	defer func ()  {
+		if err := cg.RemoveAll(); err != nil {
+			zlog.New().Error("remove cgroup error", zap.Error(err))
+			return
+		}
+		zlog.New().Info("remove cgroup success.")
+	}()
+	
+	if err := cg.SetAll(); err != nil {
+		zlog.New().Error("set cgroup error", zap.Error(err))
+		return
+	}
+
+	if err := cg.ApplyAll(int64(p.Process.Pid)); err != nil {
+		zlog.New().Error("set cgroup error", zap.Error(err))
+		return
+	}
+
+	p.Wait()
 
 	// 执行完成后，退出进程
 	os.Exit(-1)
-}
-
-// initProcess 初始化容器进程，为容器进程挂载 /proc 目录
-func InitProcess(cmd string) error {
-	defaultMountFlags :=
-		syscall.MS_NOEXEC | // 在本文件系统中不允许运行其他程序
-			syscall.MS_NOSUID | // 在本系统运行程序的时候，不允许 set-user-ID 或 set-group-ID
-			syscall.MS_NODEV // 所有 mount 的系统都会默认设定的参数
-			// 设置为私有挂载，否则容器进程挂载 proc 后主机的 proc 会失效，无法执行 ps 等命令
-			// 后续：不能设置该 flag，否则会报错：invalid argument
-			// 解决：ubuntu 根目录的挂载点的默认类型应为 MS_SHARED，执行 sudo mount --make-rprivate /
-			// 将根目录挂载类型改为私有即可
-			//syscall.MS_PRIVATE 
-
-	// 等同于命令 mount -t proc proc /proc
-	// TODO: 第四个参数 [proc] 是什么意思？
-	if err := syscall.Mount("proc", "/proc", "proc", uintptr(defaultMountFlags), ""); err != nil {
-		return err
-	}
-
-	// 试试如果没有下面这些内容会怎么样
-	// 执行完成后，没有进入到容器进程，echo $$ 输出依然为之前的 pid 而不是 1
-	argv := []string{cmd}
-	if err := syscall.Exec(cmd, argv, os.Environ()); err != nil {
-		return err
-	}
-	return nil
 }

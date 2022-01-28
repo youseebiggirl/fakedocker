@@ -1,10 +1,10 @@
 package main
 
 import (
-	"github.com/urfave/cli/v2"
 	"github.com/YOUSEEBIGGIRL/fakedocke/command"
-	"os"
+	"github.com/urfave/cli/v2"
 	"log"
+	"os"
 )
 
 func init() {
@@ -27,9 +27,9 @@ func main() {
 		return nil
 	}
 
-	log.Println("pid: ", os.Getpid())
-	log.Println("os.Args: ", os.Args)
+	//log.Println("pid: ", os.Getpid())
+	//log.Println("os.Args: ", os.Args)
 	if err := app.Run(os.Args); err != nil {
-		log.Fatal(err)
+		log.Fatalf("[fatal] fatal: %v, the program exit.", err)
 	}
 }
