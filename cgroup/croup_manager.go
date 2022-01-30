@@ -1,6 +1,10 @@
 package cgroup
 
-import "github.com/YOUSEEBIGGIRL/fakedocke/cgroup/subsystems"
+import (
+	"github.com/YOUSEEBIGGIRL/fakedocke/cgroup/subsystems"
+	"github.com/YOUSEEBIGGIRL/fakedocke/zlog"
+	"go.uber.org/zap"
+)
 
 var allSubSys = []subsystems.Interface{
 	&subsystems.CPUSubSystem{},
@@ -27,6 +31,12 @@ func (m *CgroupManager) SetAll() (err error) {
 	for _, v := range allSubSys {
 		err = v.Set(m.Path, m.ResourceConfig)
 		if err != nil {
+			zlog.New().Error(
+				"set cgroup error",
+				zap.String("subsystem name", v.Name()),
+				zap.String("subsystem path", m.Path),
+				zap.Error(err),
+			)
 			break
 		}
 	}
@@ -38,6 +48,13 @@ func (m *CgroupManager) ApplyAll(pid int64) (err error) {
 	for _, v := range allSubSys {
 		err = v.Apply(m.Path, pid)
 		if err != nil {
+			zlog.New().Error(
+				"apply process to cgroup error",
+				zap.String("subsystem name", v.Name()),
+				zap.Int64("pid", pid),
+				zap.String("subsystem path", m.Path),
+				zap.Error(err),
+			)
 			break
 		}
 	}
@@ -49,7 +66,13 @@ func (m *CgroupManager) RemoveAll() (err error) {
 	for _, v := range allSubSys {
 		err = v.Remove(m.Path)
 		if err != nil {
-			break
+			zlog.New().Error(
+				"remove cgroup error",
+				zap.String("subsystem name", v.Name()),
+				zap.String("subsystem path", m.Path),
+				zap.Error(err),
+			)
+			return
 		}
 	}
 	return

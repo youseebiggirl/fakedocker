@@ -11,11 +11,16 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	mntPath  = "/root/mnt"
+	rootPath = "/root/"
+)
+
 // NewPipe 创建一个匿名管道用于父子进程间通信
 func NewPipe() (rPipe, wPipe *os.File, err error) {
 	rPipe, wPipe, err = os.Pipe()
 	if err != nil {
-		//zlog.New().Error("create pipe error: ", zap.Error(err))
+		zlog.New().Error("create pipe error: ", zap.Error(err))
 		return nil, nil, err
 	}
 	return
@@ -35,7 +40,7 @@ func NewParentProcess(tty bool) (cmd *exec.Cmd, wp *os.File) {
 
 	rp, wp, err := NewPipe()
 	if err != nil {
-		zlog.New().Error("create pipe error: ", zap.Error(err))
+		//zlog.New().Error("create pipe error: ", zap.Error(err))
 		return nil, nil
 	}
 
@@ -43,6 +48,11 @@ func NewParentProcess(tty bool) (cmd *exec.Cmd, wp *os.File) {
 	// 这里将管道的读端 readPipe 传递给子进程，这样子进程就可以发送数据到管道中了
 	// 一个进程默认有 3 个文件描述符，stdin，stdout 和 stderr
 	cmd.ExtraFiles = []*os.File{rp}
+
+	// 将只读层和可写层挂载到 mntPath
+	NewWorkSpace(rootPath, mntPath)
+	// 给创建出来的子进程指定容器初始化后的工作目录
+	cmd.Dir = mntPath
 
 	// fork 一个新进程，并且使用 namespace 对资源进行了隔离
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -84,25 +94,26 @@ func RunProcess(tty bool, cmds []string, resConf *subsystems.ResourceConfig) {
 	sendInitCommand(cmds, wp)
 
 	cg := cgroup.NewCgroupManager("cgroup-test", resConf)
-	defer func ()  {
+	defer func() {
 		if err := cg.RemoveAll(); err != nil {
-			zlog.New().Error("remove cgroup error", zap.Error(err))
 			return
 		}
-		zlog.New().Info("remove cgroup success.")
+		//zlog.New().Info("remove cgroup success.")
 	}()
-	
+
 	if err := cg.SetAll(); err != nil {
-		zlog.New().Error("set cgroup error", zap.Error(err))
+		//zlog.New().Error("set cgroup error", zap.Error(err))
 		return
 	}
 
 	if err := cg.ApplyAll(int64(p.Process.Pid)); err != nil {
-		zlog.New().Error("set cgroup error", zap.Error(err))
+		//zlog.New().Error("set cgroup error", zap.Error(err))
 		return
 	}
 
 	p.Wait()
+	// 容器执行完成后，把容器对应的 write layer 删除
+	DeleteWorkSpace(rootPath, mntPath)
 
 	// 执行完成后，退出进程
 	os.Exit(-1)
