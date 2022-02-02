@@ -31,7 +31,7 @@ func NewPipe() (rPipe, wPipe *os.File, err error) {
 // 传入的参数，子进程通过读端来获取参数
 // tty 表示是否开启一个伪终端
 //（疑问：是不是叫 NewChildProcess 更合适？）
-func NewParentProcess(tty bool) (cmd *exec.Cmd, wp *os.File) {
+func NewParentProcess(tty bool, volume string) (cmd *exec.Cmd, wp *os.File) {
 	// 自己调用自己，同时调用 init 命令（init 会调用 InitProcess）进行初始化（挂载 /proc）
 	// cmd 可以理解为一个子进程，但是还没有启动，后续调用 Run 或 Start 启动
 	cmd = exec.Command("/proc/self/exe", "init")
@@ -50,7 +50,7 @@ func NewParentProcess(tty bool) (cmd *exec.Cmd, wp *os.File) {
 	cmd.ExtraFiles = []*os.File{rp}
 
 	// 将只读层和可写层挂载到 mntPath
-	NewWorkSpace(rootPath, mntPath)
+	NewWorkSpace(rootPath, mntPath, volume)
 	// 给创建出来的子进程指定容器初始化后的工作目录
 	cmd.Dir = mntPath
 
@@ -73,7 +73,12 @@ func NewParentProcess(tty bool) (cmd *exec.Cmd, wp *os.File) {
 }
 
 // RunProcess 运行容器进程
-func RunProcess(tty bool, cmds []string, resConf *subsystems.ResourceConfig) {
+func RunProcess(
+	tty bool,
+	cmds []string,
+	volume string,
+	resConf *subsystems.ResourceConfig,
+) {
 	zlog.New().Info(
 		"run process",
 		zap.Strings("all command", cmds),
@@ -87,34 +92,44 @@ func RunProcess(tty bool, cmds []string, resConf *subsystems.ResourceConfig) {
 		zap.String("cpuset limit", resConf.CPUSet),
 	)
 
-	p, wp := NewParentProcess(tty)
+	// 因为 NewParentProcess 里面会调用 NewWorkSpace 进行挂载，所以必须在程序结束时
+	// 执行 DeleteWorkSpace 取消挂载，不然会有一些文件任然处于挂载状态，产生一些错误，
+	// 为了达到目的，使用 defer 进行注册
+	defer func() {
+		// 容器执行完成后，把容器对应的 write layer 删除
+		if err := DeleteWorkSpace(rootPath, mntPath, volume); err != nil {
+			os.Exit(-1)
+		}
+	}()
+
+
+	p, wp := NewParentProcess(tty, volume)
 	// 运行并等待 cmd 执行完成
-	p.Start()
+	if err := p.Start(); err != nil {
+		zlog.New().Error("run process error", zap.Error(err))
+		os.Exit(-1)
+	}
 
 	sendInitCommand(cmds, wp)
 
 	cg := cgroup.NewCgroupManager("cgroup-test", resConf)
 	defer func() {
 		if err := cg.RemoveAll(); err != nil {
-			return
+			os.Exit(-1)
 		}
-		//zlog.New().Info("remove cgroup success.")
 	}()
 
+	// 忽略错误判断，函数内部会打印日志，如果遇到错误直接 return，那么后面的 DeleteWorkSpace
+	// 会无法执行，会产生各种诡异的问题
 	if err := cg.SetAll(); err != nil {
-		//zlog.New().Error("set cgroup error", zap.Error(err))
-		return
+		os.Exit(-1)
 	}
-
 	if err := cg.ApplyAll(int64(p.Process.Pid)); err != nil {
-		//zlog.New().Error("set cgroup error", zap.Error(err))
-		return
+		os.Exit(-1)
 	}
-
-	p.Wait()
-	// 容器执行完成后，把容器对应的 write layer 删除
-	DeleteWorkSpace(rootPath, mntPath)
-
+	if err := p.Wait(); err != nil {
+		os.Exit(-1)
+	}
 	// 执行完成后，退出进程
 	os.Exit(-1)
 }

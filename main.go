@@ -1,15 +1,11 @@
 package main
 
 import (
-	"github.com/YOUSEEBIGGIRL/fakedocke/command"
+	"github.com/YOUSEEBIGGIRL/fakedocke/zlog"
 	"github.com/urfave/cli/v2"
-	"log"
+	"go.uber.org/zap"
 	"os"
 )
-
-func init() {
-	log.SetFlags(log.Lshortfile | log.Ltime)
-}
 
 func main() {
 	app := cli.NewApp()
@@ -19,17 +15,16 @@ func main() {
 	Enjoy it, just for fun.`
 
 	app.Commands = []*cli.Command{
-		command.Run(),
-		command.Init(),
+		run,
+		init_,
 	}
 
 	app.Before = func(context *cli.Context) error {
 		return nil
 	}
 
-	//log.Println("pid: ", os.Getpid())
-	//log.Println("os.Args: ", os.Args)
 	if err := app.Run(os.Args); err != nil {
-		log.Fatalf("[fatal] fatal: %v, the program exit.", err)
+		zlog.New().Error("fatal, the program exit.", zap.Error(err))
+		os.Exit(-1)
 	}
 }

@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// initProcess 初始化容器进程，为容器进程挂载 /proc 目录
+// InitProcess 初始化容器进程，为容器进程挂载 /proc 目录
 func InitProcess() error {
 	// 阻塞等待，直到父进程向管道中写入内容
 	cmds := readUserCommand()
@@ -127,6 +127,14 @@ func pivotRoot(rootPath string) error {
 
 // setUpMount 初始化容器的挂载点
 func setUpMount() error {
+	// 首先设置根目录为私有模式，防止影响 pivot_root
+	cmd := exec.Command("mount", "--make-rprivate", "/")
+	_, err := cmd.CombinedOutput()
+	if err != nil {
+		zlog.New().Error("set / mount private error", zap.Error(err))
+		return err
+	}
+
 	// 获取当前路径
 	pwd, err := os.Getwd()
 	if err != nil {
@@ -149,11 +157,11 @@ func setUpMount() error {
 	// 将根目录挂载类型改为私有即可
 	// 或者使用下面的方法：
 
-	// 首先设置根目录为私有模式，防止影响 pivot_root
-	if err := syscall.Mount("/", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
-		zlog.New().Error("set / mount private error", zap.Error(err))
-		return err
-	}
+
+	//if err := syscall.Mount("/", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
+	//	zlog.New().Error("set / mount private error", zap.Error(err))
+	//	return err
+	//}
 
 	// 等同于命令 mount -t proc proc /proc
 	// TODO: 第四个参数 [proc] 是什么意思？

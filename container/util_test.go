@@ -8,13 +8,13 @@ func TestPathIsExist(t *testing.T) {
 	existPath := "/root/mnt"
 	notExistPath := "/root/123"
 
-	exist, err := pathIsExist(existPath)
+	exist, err := PathIsExist(existPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("%v exist: %v\n", existPath, exist)
 
-	exist, err = pathIsExist(notExistPath)
+	exist, err = PathIsExist(notExistPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,4 +23,16 @@ func TestPathIsExist(t *testing.T) {
 
 func TestCreateWriteLayer(t *testing.T) {
 	CreateWriteLayer("/root/")
+}
+
+func TestCreateOrClear(t *testing.T) {
+	existPath := "/root/busybox"
+	notExistPath := "/root/123"
+
+	if err := CreateOrClear(existPath); err != nil {
+		panic(err)
+	}
+	if err := CreateOrClear(notExistPath); err != nil {
+		panic(err)
+	}
 }
